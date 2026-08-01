@@ -1,0 +1,8 @@
+.pio
+.pioenvs
+.piolibdeps
+*.log
+.cache
+.dummy
+.vscode/
+compile_commands.json
