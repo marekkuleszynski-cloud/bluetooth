@@ -1,15 +1,15 @@
 #include <Arduino.h>
+#include "BluetoothManager.h"
+
+BluetoothManager bluetooth;
 
 void setup()
 {
     Serial.begin(115200);
 
-    Serial.println("ESP32 initiated");
+    bluetooth.begin();
 }
 
 void loop()
 {
-    Serial.println("Working correctly");
-
-    delay(5000);
 }
