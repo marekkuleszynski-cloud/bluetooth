@@ -7,7 +7,7 @@ class BluetoothManager
 public:
     void begin();
 
-    bool isConnected() const;
+    bool isConnected();
 
 private:
     BluetoothA2DPSink m_sink;

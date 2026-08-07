@@ -5,7 +5,7 @@ void BluetoothManager::begin()
     m_sink.start("ESP32 Audio Receiver");
 }
 
-bool BluetoothManager::isConnected() const
+bool BluetoothManager::isConnected()
 {
-    return false;
+    return m_sink.is_connected();
 }
