@@ -25,197 +25,68 @@ The ESP32 can:
 * advertise as an A2DP audio receiver
 * connect to a phone
 * receive PCM audio data
-* pass PCM data through a callback
-* buffer the data using a ring buffer
+* buffer incoming PCM data using a ring buffer
 
 Physical audio output is not implemented yet.
 
-## Architecture
+## Current Progress
 
-```text
-                         ESP32
-                           │
-                           ▼
-                         main
-                           │
-            ┌──────────────┼──────────────┐
-            │              │              │
-            ▼              ▼              ▼
-    BluetoothManager  AudioBuffer   AudioManager
-            │              ▲              │
-            │              │              │
-            └─── write() ──┘              │
-                           │               │
-                           └── read() ─────┘
-```
-
-### Audio data flow
-
-```text
-Phone
-  │
-  │ Bluetooth A2DP
-  ▼
-BluetoothA2DPSink
-  │
-  │ PCM callback
-  ▼
-BluetoothManager
-  │
-  │ write()
-  ▼
-AudioBuffer
-  │
-  │ read()
-  ▼
-AudioManager
-  │
-  ▼
-I2S
-  │
-  ▼
-DAC
-  │
-  ▼
-Amplifier
-```
-
-The I2S and physical audio output stages are planned but not implemented yet.
-
-## Modules
-
-### BluetoothManager
-
-Responsible for Bluetooth A2DP.
-
-* starts the Bluetooth receiver
-* manages the Bluetooth connection
-* receives PCM data
-* writes PCM data to `AudioBuffer`
-
-### AudioBuffer
-
-Independent ring buffer responsible only for buffering PCM data.
-
-Tested functionality:
-
-* write
-* read
-* available data
-* free space
-* wrap-around
-* full-buffer protection
-
-Current test buffer size:
-
-```text
-8192 bytes
-```
-
-### AudioManager
-
-Responsible for consuming buffered audio and managing audio-related functionality.
-
-Planned functionality includes:
-
-* PCM consumption
-* audio output
-* volume control
-* connection tones
-* searching tone
-* disconnection tone
-
-## Current State
-
-### Working
-
-* [x] ESP32 project
-* [x] PlatformIO
-* [x] Git/GitHub
-* [x] Modular architecture
+* [x] PlatformIO project
+* [x] Git / GitHub
+* [x] Modular project structure
 * [x] Bluetooth A2DP receiver
-* [x] Phone pairing
-* [x] PCM reception
-* [x] PCM callback
+* [x] Bluetooth pairing and connection
+* [x] PCM stream reception
+* [x] Audio callback
 * [x] Ring buffer
 * [x] Buffer wrap-around
 * [x] Full-buffer protection
-* [x] Shared buffer between modules
-
-### In Progress
-
+* [x] Shared `AudioBuffer`
 * [ ] AudioManager consuming PCM data
-* [ ] Producer/consumer synchronization
-* [ ] I2S output
-* [ ] DAC integration
+* [ ] I2S
+* [ ] DAC
 * [ ] Physical audio output
-
-### Planned
-
 * [ ] OLED
 * [ ] AVRCP
 * [ ] OTA
-* [ ] Equalizer
-* [ ] Audio visualization
 
-## Project Structure
+## Development Status
 
-```text
-src/
-├── main.cpp
-├── BluetoothManager.cpp
-├── AudioManager.cpp
-└── AudioBuffer.cpp
-
-include/
-├── BluetoothManager.h
-├── AudioManager.h
-└── AudioBuffer.h
-```
-
-## Design Philosophy
-
-The project follows a modular architecture.
-
-Each module has one primary responsibility:
+The current development focus is the audio data pipeline:
 
 ```text
-BluetoothManager
-    ↓
-receives audio
-
-AudioBuffer
-    ↓
-stores audio
-
-AudioManager
-    ↓
-consumes/processes audio
-
-I2S
-    ↓
-transports audio
-
-DAC
-    ↓
-converts digital audio to analog
-
-Amplifier
-    ↓
-drives the speaker
+Bluetooth reception
+        ↓
+    PCM callback
+        ↓
+    AudioBuffer
+        ↓
+   AudioManager
 ```
 
-`main` acts as the system orchestrator and connects the modules together.
+The next step is to implement the consumer side of the buffer and connect it to the audio output pipeline.
 
-The modules do not unnecessarily own or copy each other's objects. Shared resources are passed explicitly, using references where a dependency is mandatory.
+## Documentation
 
-## Development
+* [Architecture](ARCHITECTURE.md)
+* [Roadmap](ROADMAP.md)
 
-Built with:
+## Hardware
+
+Target platform:
 
 * ESP32
+* Bluetooth A2DP
+* External DAC
+* External amplifier
+
+The exact DAC and amplifier configuration will be defined during the I2S and audio output stages.
+
+## Development Environment
+
 * PlatformIO
 * C++
+* ESP32 Arduino framework
 * ESP32-A2DP library
 
-The project is intentionally developed incrementally: each subsystem is tested independently before the next layer is introduced.
+The project is developed incrementally, with each subsystem tested before integrating the next layer.
