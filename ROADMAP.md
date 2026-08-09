@@ -1,30 +1,92 @@
-Sprint 0
+# Roadmap
 
-[x] PlatformIO
-[x] Git
-[x] GitHub
-[x] Project structure
+## Sprint 0 — Project Foundation
 
-Sprint 1
+* [x] PlatformIO
+* [x] Git
+* [x] GitHub
+* [x] Project structure
+* [x] Modular C++ architecture
+* [x] `BluetoothManager`
+* [x] `AudioBuffer`
+* [x] `AudioManager` foundation
+* [x] Shared buffer architecture
+* [x] Ring buffer tests
+* [x] Bluetooth PCM reception
 
-[ ] Bluetooth pairing
+## Sprint 1 — Bluetooth & Audio Data Pipeline
 
-Sprint 2
+* [x] Bluetooth A2DP pairing
+* [x] Bluetooth connection
+* [x] PCM stream callback
+* [x] PCM data reception
+* [x] AudioBuffer integration
+* [x] Producer/consumer architecture
+* [ ] AudioManager buffer consumption
+* [ ] Buffer underrun/overflow strategy
+* [ ] Connection state handling
+* [ ] Connection/disconnection events
 
-[ ] I2S
+## Sprint 2 — I2S
 
-Sprint 3
+* [ ] Understand ESP32 I2S architecture
+* [ ] Configure I2S
+* [ ] Connect AudioManager to I2S
+* [ ] Implement PCM → I2S data path
+* [ ] Verify sample rate
+* [ ] Verify channel configuration
+* [ ] Verify bit depth
+* [ ] Test continuous streaming
 
-[ ] Audio output
+## Sprint 3 — Audio Output
 
-Sprint 4
+* [ ] Connect DAC
+* [ ] Connect amplifier
+* [ ] Implement physical audio output
+* [ ] Verify stable playback
+* [ ] Tune audio buffering
+* [ ] Handle buffer underruns
+* [ ] Implement volume control
+* [ ] Implement connected tone
+* [ ] Implement disconnected tone
+* [ ] Implement searching/standby tone
 
-[ ] OLED
+## Sprint 4 — OLED
 
-Sprint 5
+* [ ] OLED driver/module
+* [ ] Display Bluetooth state
+* [ ] Display connection status
+* [ ] Display volume
+* [ ] Display playback state
+* [ ] Display basic audio information
+* [ ] Keep visualization separate from audio processing
 
-[ ] AVRCP
+## Sprint 5 — AVRCP
 
-Sprint 6
+* [ ] AVRCP connection
+* [ ] Play/pause
+* [ ] Next track
+* [ ] Previous track
+* [ ] Remote volume control
+* [ ] Track metadata
+* [ ] Integrate AVRCP state with UI
 
-[ ] OTA
+## Sprint 6 — OTA
+
+* [ ] OTA architecture
+* [ ] Firmware update mechanism
+* [ ] Validate update process
+* [ ] Recovery strategy
+* [ ] Document OTA procedure
+
+## Future / Optional
+
+These features are intentionally outside the current core scope:
+
+* [ ] Equalizer
+* [ ] Audio visualization
+* [ ] Advanced DSP
+* [ ] Additional codecs
+* [ ] Advanced power management
+* [ ] Web configuration
+* [ ] Wi-Fi configuration

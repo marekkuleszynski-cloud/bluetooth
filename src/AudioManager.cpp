@@ -22,15 +22,15 @@ uint8_t AudioManager::getVolume() const
 
 void AudioManager::playConnectedTone()
 {
-    // TODO: Generate and play connected tone
+    // TODO
 }
 
 void AudioManager::playDisconnectedTone()
 {
-    // TODO: Generate and play disconnected tone
+    // TODO
 }
 
 void AudioManager::playSearchingTone()
 {
-    // TODO: Generate and play searching tone
+    // TODO
 }
