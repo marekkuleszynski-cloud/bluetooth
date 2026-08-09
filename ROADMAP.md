@@ -22,8 +22,8 @@
 * [x] PCM data reception
 * [x] AudioBuffer integration
 * [x] Producer/consumer architecture
-* [ ] AudioManager buffer consumption
-* [ ] Buffer underrun/overflow strategy
+* [x] AudioManager buffer consumption
+* [x] Buffer underrun/overflow strategy
 * [ ] Connection state handling
 * [ ] Connection/disconnection events
 

@@ -21,71 +21,62 @@ bool AudioBuffer::begin(size_t size)
     m_size = size;
     m_writeIndex = 0;
     m_readIndex = 0;
-    m_available = 0;
 
     return true;
 }
 
-size_t AudioBuffer::write(const uint8_t *data, size_t length)
+size_t AudioBuffer::write(const uint8_t* data, size_t length)
 {
     if (data == nullptr || length == 0)
     {
         return 0;
     }
 
-    size_t space = m_size - m_available;
+    size_t bytesWritten = 0;
 
-    if (space == 0)
+    while (bytesWritten < length)
     {
-        return 0;
-    }
+        size_t nextWriteIndex = m_writeIndex + 1;
 
-    size_t bytesToWrite = length;
-
-    if (bytesToWrite > space)
-    {
-        bytesToWrite = space;
-    }
-
-    for (size_t i = 0; i < bytesToWrite; i++)
-    {
-        m_buffer[m_writeIndex] = data[i];
-
-        m_writeIndex++;
-
-        if (m_writeIndex >= m_size)
+        if (nextWriteIndex >= m_size)
         {
-            m_writeIndex = 0;
+            nextWriteIndex = 0;
         }
+
+        // Buffer full
+        if (nextWriteIndex == m_readIndex)
+        {
+            break;
+        }
+
+        m_buffer[m_writeIndex] = data[bytesWritten];
+
+        m_writeIndex = nextWriteIndex;
+
+        bytesWritten++;
     }
 
-    m_available += bytesToWrite;
-
-    return bytesToWrite;
+    return bytesWritten;
 }
 
-size_t AudioBuffer::read(uint8_t *data, size_t length)
+size_t AudioBuffer::read(uint8_t* data, size_t length)
 {
     if (data == nullptr || length == 0)
     {
         return 0;
     }
 
-    if (m_available == 0)
-    {
-        return 0;
-    }
+    size_t bytesRead = 0;
 
-    size_t bytesToRead = length;
-
-    if (bytesToRead > m_available)
+    while (bytesRead < length)
     {
-        bytesToRead = m_available;
-    }
+        // Buffer empty
+        if (m_readIndex == m_writeIndex)
+        {
+            break;
+        }
 
-    for (size_t i = 0; i < bytesToRead; i++)
-    {
-        data[i] = m_buffer[m_readIndex];
+        data[bytesRead] = m_buffer[m_readIndex];
 
         m_readIndex++;
 
@@ -93,19 +84,24 @@ size_t AudioBuffer::read(uint8_t *data, size_t length)
         {
             m_readIndex = 0;
         }
+
+        bytesRead++;
     }
 
-    m_available -= bytesToRead;
-
-    return bytesToRead;
+    return bytesRead;
 }
 
 size_t AudioBuffer::available() const
 {
-    return m_available;
+    if (m_writeIndex >= m_readIndex)
+    {
+        return m_writeIndex - m_readIndex;
+    }
+
+    return m_size - m_readIndex + m_writeIndex;
 }
 
 size_t AudioBuffer::freeSpace() const
 {
-    return m_size - m_available;
+    return (m_size - 1) - available();
 }

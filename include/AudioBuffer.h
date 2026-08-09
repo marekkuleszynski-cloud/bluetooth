@@ -22,5 +22,4 @@ private:
     size_t m_size = 0;
     size_t m_writeIndex = 0;
     size_t m_readIndex = 0;
-    size_t m_available = 0;
 };
