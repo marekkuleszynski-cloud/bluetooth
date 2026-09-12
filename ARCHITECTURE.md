@@ -2,264 +2,198 @@
 
 ## Overview
 
-The project is structured as a set of independent modules with clearly separated responsibilities.
+The ESP32 Bluetooth Audio Receiver uses a direct Bluetooth A2DP to I2S audio pipeline.
 
-The `main` module acts as the system orchestrator. It creates the components and connects their dependencies, but does not implement Bluetooth or audio processing logic itself.
+The architecture deliberately avoids adding a custom PCM buffering layer because the ESP32-A2DP and ESP32 I2S stack already provide the buffering and real-time mechanisms required for continuous audio playback.
 
-```text
-                         main
-                          │
-          ┌───────────────┼────────────────┐
-          │               │                │
-          ▼               ▼                ▼
- BluetoothManager    AudioBuffer      AudioManager
-          │               ▲                │
-          │               │                │
-          └─── write() ──►│◄── read() ────┘
-                          │
-                     PCM audio data
-```
-
-## Data Flow
-
-The current audio data flow is:
+## Audio Pipeline
 
 ```text
-Phone
-  │
-  │ Bluetooth A2DP
-  ▼
+Smartphone
+    ↓
+Bluetooth A2DP
+    ↓
 BluetoothA2DPSink
-  │
-  │ PCM callback
-  ▼
-BluetoothManager
-  │
-  │ write()
-  ▼
+    ↓
+I2SClass
+    ↓
+ESP32 I2S peripheral
+    ↓
+External I2S DAC / amplifier
+    ↓
+Analog audio / speaker
+```
+
+## Bluetooth Layer
+
+Bluetooth audio reception is handled by the `ESP32-A2DP` library.
+
+The ESP32 operates as an A2DP sink and receives audio from a smartphone or another Bluetooth audio source.
+
+The library handles:
+
+- Bluetooth discovery
+- pairing
+- A2DP connection
+- SBC decoding
+- PCM audio generation
+- audio stream handling
+
+## I2S Layer
+
+Decoded PCM audio is passed directly to the ESP32 I2S subsystem using `I2SClass`.
+
+Current configuration:
+
+```text
+Sample rate: 44.1 kHz
+Bit depth:   16 bit
+Channels:    Stereo
+BCLK:        GPIO26
+LRCK / WS:   GPIO25
+DATA OUT:    GPIO22
+```
+
+## Hardware Output
+
+Two I2S audio devices were tested during development.
+
+### PCM5102A
+
+Used as a stereo line-level DAC.
+
+```text
+ESP32 GPIO26 -> BCK
+ESP32 GPIO25 -> LRCK
+ESP32 GPIO22 -> DIN
+```
+
+The analog output is connected to an external amplifier.
+
+Typical control configuration:
+
+```text
+XMT -> 3.3V
+FMT -> GND
+SCK -> GND
+DMP -> GND
+FLT -> GND
+```
+
+### MAX98357A
+
+Used as an I2S DAC with an integrated Class-D speaker amplifier.
+
+```text
+ESP32 GPIO26 -> BCLK
+ESP32 GPIO25 -> LRC
+ESP32 GPIO22 -> DIN
+```
+
+## Removed Custom Buffer Layer
+
+An earlier architecture used a custom producer / consumer pipeline:
+
+```text
+Bluetooth callback
+    ↓
 AudioBuffer
-  │
-  │ read()
-  ▼
+    ↓
 AudioManager
-  │
-  │
-  ▼
-Audio Output
+    ↓
+I2SManager
 ```
 
-The actual audio output is not implemented yet.
+`AudioBuffer` implemented a custom ring buffer.
 
-## Modules
+The design was useful for learning:
 
-### main
+- circular buffers
+- producer / consumer architecture
+- PCM data flow
+- buffer overflow protection
+- modular C++ design
+- unit testing
 
-`main` is responsible for system composition and orchestration.
+However, in the final audio path it duplicated buffering already provided by the Bluetooth and I2S stack.
 
-Responsibilities:
+It also introduced additional synchronization and timing concerns between the Bluetooth task and the audio consumer.
 
-* create system modules
-* initialize modules
-* connect module dependencies
-* control the main execution flow
+Testing showed that direct A2DP-to-I2S streaming was significantly more stable.
 
-`main` should not contain Bluetooth implementation or audio processing logic.
+The custom buffer layer was therefore removed from the runtime architecture.
 
-Current objects:
+## Current Design Principle
 
-```cpp
-AudioBuffer audioBuffer;
-BluetoothManager bluetooth(audioBuffer);
-AudioManager audio(audioBuffer);
-```
-
-### BluetoothManager
-
-Responsible for Bluetooth A2DP functionality.
-
-Responsibilities:
-
-* initialize Bluetooth A2DP
-* start the Bluetooth sink
-* manage Bluetooth connection
-* receive PCM audio data
-* forward received PCM data to `AudioBuffer`
-
-The manager does not own the `AudioBuffer`.
-
-It receives a reference to an existing buffer:
-
-```cpp
-BluetoothManager(AudioBuffer& buffer);
-```
-
-This keeps ownership separate from data production.
-
-### AudioBuffer
-
-`AudioBuffer` is an independent ring buffer used to decouple the Bluetooth producer from the audio consumer.
-
-Responsibilities:
-
-* store PCM data
-* write incoming data
-* read buffered data
-* track available data
-* track free space
-* handle buffer wrap-around
-* prevent writes when the buffer is full
-
-The buffer has been tested for:
-
-* normal write/read operation
-* partial reads
-* wrap-around
-* full-buffer behavior
-
-Current test capacity:
+The current design follows a simpler architecture:
 
 ```text
-8192 bytes
+ESP32-A2DP library
+        ↓
+Real-time audio handling
+        ↓
+I2S peripheral
+        ↓
+External audio hardware
 ```
 
-The buffer successfully handles the situation where Bluetooth continues producing data after the buffer becomes full:
+Custom software layers are added only when they provide functionality required by the application.
+
+Possible future reasons to introduce an intermediate audio processing layer include:
+
+- DSP
+- equalizer
+- software volume processing
+- audio mixing
+- sound effects
+- generated notification tones
+
+Until such functionality is required, the direct audio path is preferred.
+
+## Hardware Design Considerations
+
+I2S signal integrity proved important during development.
+
+The prototype uses:
+
+- short signal wires
+- soldered connections
+- solid common ground
+- twisted signal / ground pairs where practical
+- local power supply decoupling
+
+The BCLK line is particularly sensitive to poor wiring because fast digital edges can cause ringing and reflections even when the nominal clock frequency is relatively low.
+
+## Board Selection
+
+A standard ESP32-WROOM development board provided stable Bluetooth A2DP and I2S operation.
+
+A Wemos D1 R32 ESP32 board was also tested but showed intermittent audio interruptions in the same application.
+
+The standard ESP32-WROOM board is therefore currently used as the reference development platform.
+
+## Development Approach
+
+The project is developed incrementally.
+
+Each subsystem is tested independently before integration.
+
+The debugging process follows this principle:
 
 ```text
-Received: 4096 | Written: 4096 | Buffer: 4096
-Received: 4096 | Written: 4096 | Buffer: 8192
-Received: 4096 | Written: 0    | Buffer: 8192
+Bluetooth
+    ↓
+verify independently
+
+I2S
+    ↓
+verify independently
+
+DAC / amplifier
+    ↓
+verify independently
+
+Integrated system
 ```
 
-### AudioManager
-
-`AudioManager` is responsible for audio consumption and audio-related functionality.
-
-Planned responsibilities:
-
-* consume PCM data from `AudioBuffer`
-* control audio output
-* control volume
-* generate connection/search/disconnection tones
-* later provide a suitable interface for additional audio processing
-
-Current functionality:
-
-* volume management
-* buffer dependency
-* initial consumer implementation
-
-Not yet implemented:
-
-* physical audio output
-* I2S
-* DAC integration
-* tones
-
-## Producer / Consumer Model
-
-The architecture follows a producer/consumer model.
-
-```text
-             PRODUCER
-                │
-                │ PCM
-                ▼
-        ┌───────────────┐
-        │  AudioBuffer  │
-        └───────────────┘
-                ▲
-                │ PCM
-                │
-             CONSUMER
-```
-
-`BluetoothManager` produces PCM data.
-
-`AudioManager` consumes PCM data.
-
-`AudioBuffer` provides temporary storage between them.
-
-This decouples the timing of Bluetooth reception from audio output processing.
-
-## Dependency Ownership
-
-The `AudioBuffer` is created by `main`.
-
-Neither `BluetoothManager` nor `AudioManager` owns the buffer.
-
-Both modules receive a reference:
-
-```text
-main
- │
- ├── owns AudioBuffer
- │
- ├── BluetoothManager ──► AudioBuffer
- │
- └── AudioManager ──────► AudioBuffer
-```
-
-References are used because both modules require an existing buffer and there is no meaningful "no buffer" state.
-
-No copy of `AudioBuffer` is created.
-
-## Bluetooth Callback
-
-The ESP32-A2DP library provides PCM data through a callback:
-
-```cpp
-set_stream_reader(callback, false);
-```
-
-The callback receives:
-
-```cpp
-const uint8_t* data
-uint32_t length
-```
-
-The current implementation forwards the data to the shared `AudioBuffer`.
-
-Because the library expects a plain function pointer, the callback is implemented as a static member and routed to the active `BluetoothManager` instance.
-
-## Design Principles
-
-The project follows these principles:
-
-1. Single responsibility per module.
-2. `main` orchestrates but does not implement subsystem logic.
-3. Modules communicate through explicit interfaces.
-4. Ownership should be clear.
-5. Avoid unnecessary copying of objects and data.
-6. Bluetooth reception should be decoupled from audio output.
-7. Real-time audio processing should not depend on blocking operations.
-8. Additional functionality should be introduced incrementally and tested independently.
-
-## Current Architecture Status
-
-Implemented and tested:
-
-* PlatformIO project
-* Git/GitHub workflow
-* modular project structure
-* Bluetooth A2DP sink
-* Bluetooth connection
-* PCM reception
-* PCM callback
-* shared `AudioBuffer`
-* ring buffer write/read
-* wrap-around
-* full-buffer handling
-* producer/consumer architecture foundation
-
-Not implemented yet:
-
-* I2S
-* DAC
-* physical audio output
-* audio tones
-* AVRCP
-* OLED
-* OTA
-* equalizer
-* visualization
+This approach made it possible to distinguish software timing problems from hardware signal-integrity problems.

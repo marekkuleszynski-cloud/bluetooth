@@ -1,47 +1,41 @@
 #include <Arduino.h>
+#include <ESP_I2S.h>
+#include <BluetoothA2DPSink.h>
 
-#include "AudioBuffer.h"
-#include "BluetoothManager.h"
-#include "I2SManager.h"
-#include "AudioManager.h"
-
-AudioBuffer audioBuffer;
-BluetoothManager bluetooth(audioBuffer);
-
-I2SManager i2s;
-AudioManager audio(audioBuffer, i2s);
+I2SClass i2s;
+BluetoothA2DPSink a2dpSink(i2s);
 
 void setup()
 {
     Serial.begin(115200);
-    delay(5000);
+    delay(1000);
 
-    Serial.println("=== SYSTEM START ===");
+    i2s.setPins(
+        26,  // BCLK
+        25,  // LRCK / WS
+        22   // DATA OUT
+    );
 
-    if (!audioBuffer.begin(8192))
+    if (!i2s.begin(
+        I2S_MODE_STD,
+        44100,
+        I2S_DATA_BIT_WIDTH_16BIT,
+        I2S_SLOT_MODE_STEREO,
+        I2S_STD_SLOT_BOTH))
     {
-        Serial.println("ERROR: AudioBuffer initialization failed");
-        return;
+        Serial.println("I2S initialization failed");
+        while (true)
+        {
+            delay(1000);
+        }
     }
 
-    Serial.println("AudioBuffer initialized");
+    a2dpSink.start("Marocco's Lab Audio Receiver");
 
-    if (!i2s.begin())
-    {
-        Serial.println("ERROR: I2S initialization failed");
-        return;
-    }
-
-    Serial.println("I2S initialized");
-
-    audio.begin();
-
-    bluetooth.begin();
-
-    Serial.println("Bluetooth started");
+    Serial.println("Bluetooth A2DP receiver started");
 }
 
 void loop()
 {
-    audio.process();
+    delay(1000);
 }
