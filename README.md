@@ -196,8 +196,6 @@ The current implementation streams audio directly from `BluetoothA2DPSink` to `I
 - ESP32 Arduino framework
 - ESP32-A2DP
 
-Arduino-ESP32 `3.3.8` is currently used for reproducible audio testing.
-
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md)
