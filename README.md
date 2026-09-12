@@ -199,7 +199,6 @@ The current implementation streams audio directly from `BluetoothA2DPSink` to `I
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md)
-- [Roadmap](ROADMAP.md)
 
 ## Lessons Learned
 
