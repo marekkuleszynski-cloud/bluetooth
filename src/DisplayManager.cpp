@@ -18,6 +18,11 @@ const char* visualModeNames[MODE_COUNT] =
     "Color Wave",
     "Pixel Matrix",
     "Dual Gauge",
+    "Retro VU",
+    "Winamp Classic",
+    "Winamp Fire",
+    "Scope CRT",
+    "Scope Stereo",
     "Equalizer"
 };
 
@@ -2604,12 +2609,35 @@ static bool gaugeFaceReady = false;
 static float gaugeLevel[2] = {0.0f, 0.0f};
 static float gaugeDrawnAngle[2] = {-999.0f, -999.0f};
 static uint32_t gaugeLastUpdate = 0;
+static bool retroFaceReady = false;
+static float retroLevel[2] = {0.0f, 0.0f};
+static float retroAngle[2] = {-999.0f, -999.0f};
+static uint32_t retroLastUpdate = 0;
 
+
+static uint8_t waClassicPrev[BAND_COUNT] = {};
+static uint8_t waFirePrev[BAND_COUNT] = {};
+static float waClassicPeak[BAND_COUNT] = {};
+static int8_t waClassicPeakDrawn[BAND_COUNT] = {};
+static uint32_t waClassicTick = 0;
+static int16_t scopePrevY[2][160] = {};
+static bool scopePrevValid = false;
+static uint32_t scopeLastFrame = 0;
 
 void resetVisualState()
 
 {
+    scopePrevValid = false;
+    scopeLastFrame = 0;
     gaugeFaceReady = false;
+    retroFaceReady = false;
+    memset(waClassicPrev, 0, sizeof(waClassicPrev));
+    memset(waFirePrev, 0, sizeof(waFirePrev));
+    memset(waClassicPeak, 0, sizeof(waClassicPeak));
+    memset(waClassicPeakDrawn, 0, sizeof(waClassicPeakDrawn));
+    waClassicTick = millis();
+    retroLevel[0] = retroLevel[1] = 0.0f;
+    retroAngle[0] = retroAngle[1] = -999.0f;
     gaugeLevel[0] = gaugeLevel[1] = 0.0f;
     gaugeDrawnAngle[0] = gaugeDrawnAngle[1] = -999.0f;
 
@@ -2761,9 +2789,9 @@ void resetVisualState()
 static constexpr int GAUGE_PIVOT_Y = 193;
 static constexpr int GAUGE_TIP_R = 83;
 static constexpr float GAUGE_START_DEG = 205.0f;
-static constexpr float GAUGE_SWEEP_DEG = 130.0f;
+static constexpr float GAUGE_SWEEP_DEG = 120.0f;  // inset at right scale endpoint
 static constexpr uint16_t GAUGE_REFRESH_MS = 33; // ~30 FPS; reduce TFT load
-static constexpr float GAUGE_VISUAL_GAIN_DB = 18.0f;
+static constexpr float GAUGE_VISUAL_GAIN_DB = 3.0f;
 
 static int gaugeCX(uint8_t side) { return side ? 240 : 80; }
 static uint16_t gaugeInnerColor() { return tft.color565(240, 241, 243); }
@@ -2926,14 +2954,14 @@ static void drawDualGauge()
         const float alpha = 1.0f - expf(-dt / tau);
         gaugeLevel[ch] += (in[ch] - gaugeLevel[ch]) * alpha;
 
-        // +12 dB is DISPLAY-ONLY sensitivity, not an audio amplifier.
-        // -42..0 dB then fills the complete mechanical sweep; ordinary
-        // material around -25..-8 dB now has useful travel.
+        // Display-only trim, kept modest to prevent both needles
+        // saturating near the right-hand end with normal music.
         const float db = 20.0f *
             log10f(fmaxf(gaugeLevel[ch], 0.0001f)) +
             GAUGE_VISUAL_GAIN_DB;
         const float pos = (constrain(db, -42.0f, 0.0f) + 42.0f) / 42.0f;
-        const float angle = GAUGE_START_DEG + pos * GAUGE_SWEEP_DEG;
+        const float angle = constrain(GAUGE_START_DEG + pos * GAUGE_SWEEP_DEG,
+                                      GAUGE_START_DEG, GAUGE_START_DEG + GAUGE_SWEEP_DEG);
 
         if (fabsf(angle - gaugeDrawnAngle[ch]) >= 0.8f)
         {
@@ -2944,6 +2972,347 @@ static void drawDualGauge()
             gaugeDrawnAngle[ch] = angle;
         }
     }
+}
+
+// ==================================================
+// RETRO VU — illuminated ivory meter pair with machined chrome cases.
+// These meters use the EXISTING stereo peak taps, no extra FFT.
+// ==================================================
+static constexpr int RETRO_CY = 126;
+static constexpr int RETRO_PIVOT_Y = 168;
+static constexpr int RETRO_NEEDLE_LENGTH = 57;
+static constexpr float RETRO_FIRST_ANGLE = 208.0f;
+static constexpr float RETRO_LAST_ANGLE = 332.0f;
+static constexpr uint32_t RETRO_REFRESH_MS = 33;  // same stable 30fps limit
+static constexpr float RETRO_SENSITIVITY_DB = 3.0f;
+static int retroCenter(uint8_t ch) { return ch ? 240 : 80; }
+static uint16_t retroIvory() { return tft.color565(255, 226, 161); }
+
+static void retroNeedle(uint8_t ch, float deg, bool erase)
+{
+    const int x = retroCenter(ch), y = RETRO_PIVOT_Y;
+    const float a = deg * DEG_TO_RAD;
+    const int tx = x + lroundf(cosf(a) * RETRO_NEEDLE_LENGTH);
+    const int ty = y + lroundf(sinf(a) * RETRO_NEEDLE_LENGTH);
+    if (erase)
+    {
+        const uint16_t bg = retroIvory();
+        // Erase exactly every previous stroke (including shadow and highlight).
+        tft.drawLine(x+2,y+2,tx+2,ty+2,bg);
+        tft.drawLine(x+1,y,tx+1,ty,bg);
+        tft.drawLine(x-1,y,tx-1,ty,bg);
+        tft.drawLine(x,y,tx,ty,bg);
+        tft.drawLine(x-1,y-1,tx-1,ty-1,bg);
+        return;
+    }
+    tft.drawLine(x+2,y+2,tx+2,ty+2,tft.color565(157,105,44));
+    tft.drawLine(x+1,y,tx+1,ty,tft.color565(75,29,17));
+    tft.drawLine(x-1,y,tx-1,ty,tft.color565(112,21,15));
+    tft.drawLine(x,y,tx,ty,tft.color565(230,34,20));
+    tft.drawLine(x-1,y-1,tx-1,ty-1,tft.color565(255,125,59));
+}
+
+static void retroHub(uint8_t ch)
+{
+    const int x=retroCenter(ch), y=RETRO_PIVOT_Y;
+    tft.fillCircle(x+1,y+2,9,tft.color565(74,56,40));
+    tft.fillCircle(x,y,8,tft.color565(48,47,47));
+    tft.drawCircle(x,y,8,tft.color565(151,134,112));
+    tft.fillCircle(x-2,y-3,3,tft.color565(143,139,128));
+}
+
+static void retroScrew(int x,int y)
+{
+    tft.fillCircle(x+1,y+1,4,tft.color565(44,40,39));
+    tft.fillCircle(x,y,4,tft.color565(177,174,171));
+    tft.drawCircle(x,y,4,tft.color565(71,69,67));
+    tft.drawLine(x-2,y+2,x+2,y-2,tft.color565(51,48,48));
+    tft.drawPixel(x-2,y-2,TFT_WHITE);
+}
+
+static void drawRetroFace(uint8_t ch)
+{
+    const int cx=retroCenter(ch);
+    // 150-pixel body, fitting two perfectly symmetric faces in 320 pixels.
+    tft.fillCircle(cx+2,RETRO_CY+3,77,tft.color565(20,18,19));
+    tft.fillCircle(cx,RETRO_CY,76,tft.color565(66,64,63));
+    tft.fillCircle(cx-1,RETRO_CY-1,74,tft.color565(181,177,171));
+    tft.drawCircle(cx,RETRO_CY,75,tft.color565(246,244,238));
+    tft.drawCircle(cx,RETRO_CY,72,tft.color565(103,99,94));
+    tft.fillCircle(cx,RETRO_CY,69,tft.color565(33,27,25));
+    tft.fillCircle(cx,RETRO_CY,65,tft.color565(231,166,58));
+    tft.fillCircle(cx,RETRO_CY,61,tft.color565(254,210,116));
+    tft.fillCircle(cx,RETRO_CY,58,retroIvory());
+    // Concentrated overhead lamp and recessed concentric brass bands.
+    tft.drawArc(cx,RETRO_CY,66,64,210,330,tft.color565(255,220,138),TFT_BLACK);
+    tft.drawArc(cx,RETRO_CY,68,67,215,325,tft.color565(91,54,27),TFT_BLACK);
+    tft.fillCircle(cx,RETRO_CY-51,5,tft.color565(255,242,186));
+    tft.fillCircle(cx,RETRO_CY-51,2,TFT_WHITE);
+    // Scale printed on fixed, illuminated surface. Needle ends before ticks.
+    for (int i=0;i<=20;i++)
+    {
+        const float a=(RETRO_FIRST_ANGLE+(RETRO_LAST_ANGLE-RETRO_FIRST_ANGLE)*i/20)*DEG_TO_RAD;
+        const int r1=(i%5==0)?61:65, r2=69;
+        const int x1=cx+lroundf(cosf(a)*r1);
+        const int y1=RETRO_PIVOT_Y+lroundf(sinf(a)*r1);
+        const int x2=cx+lroundf(cosf(a)*r2);
+        const int y2=RETRO_PIVOT_Y+lroundf(sinf(a)*r2);
+        // Clip to the inset circular dial area.
+        if ((x1-cx)*(x1-cx)+(y1-RETRO_CY)*(y1-RETRO_CY)>57*57 ||
+            (x2-cx)*(x2-cx)+(y2-RETRO_CY)*(y2-RETRO_CY)>62*62) continue;
+        tft.drawLine(x1,y1,x2,y2,
+            i>=15?tft.color565(191,23,19):tft.color565(36,30,27));
+    }
+    // Printed numerals ABOVE the needle sweep, deliberately not under needle.
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(tft.color565(36,30,26),retroIvory());
+    tft.drawString("-20",cx-43,RETRO_CY-22,1);
+    tft.drawString("-10",cx-23,RETRO_CY-38,1);
+    tft.drawString("-5",cx,RETRO_CY-43,1);
+    tft.setTextColor(tft.color565(176,19,16),retroIvory());
+    tft.drawString("0",cx+26,RETRO_CY-38,1);
+    tft.drawString("+3",cx+46,RETRO_CY-22,1);
+    tft.setTextColor(tft.color565(52,39,30),retroIvory());
+    tft.drawString("VU",cx,RETRO_CY-5,2);
+    // A little machined plate at the bottom, outside needle's travel.
+    tft.fillRoundRect(cx-45,189,90,19,3,tft.color565(61,58,56));
+    tft.fillRoundRect(cx-43,190,86,15,2,tft.color565(175,171,167));
+    tft.drawFastHLine(cx-40,191,80,TFT_WHITE);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(tft.color565(18,17,16),tft.color565(175,171,167));
+    tft.drawString(ch?"R":"L",cx,197,2);
+    // Decorative bezel bolts placed on machined flange.
+    retroScrew(cx-54,RETRO_CY-47);
+    retroScrew(cx+54,RETRO_CY-47);
+    retroScrew(cx-55,RETRO_CY+46);
+    retroScrew(cx+55,RETRO_CY+46);
+}
+
+static void drawRetroVU()
+{
+    if (!retroFaceReady)
+    {
+        drawRetroFace(0);
+        delay(1); // preserve the SPI-safe behavior of DUAL GAUGE
+        drawRetroFace(1);
+        delay(1);
+        retroFaceReady = true;
+        retroLastUpdate = millis();
+        retroAngle[0] = retroAngle[1] = -999.0f;
+    }
+    const uint32_t now=millis();
+    if(now-retroLastUpdate < RETRO_REFRESH_MS) return;
+    const float dt=constrain(float(now-retroLastUpdate),1.0f,70.0f);
+    retroLastUpdate=now;
+    const float levels[2]={stereoPeakLeft/32768.0f,stereoPeakRight/32768.0f};
+    for(uint8_t ch=0;ch<2;ch++)
+    {
+        const float tau=levels[ch]>retroLevel[ch]?15.0f:210.0f;
+        retroLevel[ch]+=(levels[ch]-retroLevel[ch])*(1.0f-expf(-dt/tau));
+        const float db=20.0f*log10f(fmaxf(retroLevel[ch],0.0001f))+RETRO_SENSITIVITY_DB;
+        const float p=(constrain(db,-42.0f,0.0f)+42.0f)/42.0f;
+        const float deg=constrain(RETRO_FIRST_ANGLE+p*(RETRO_LAST_ANGLE-RETRO_FIRST_ANGLE),
+                                  RETRO_FIRST_ANGLE,RETRO_LAST_ANGLE);
+        if(fabsf(deg-retroAngle[ch])>=0.85f)
+        {
+            if(retroAngle[ch]>-100.0f) retroNeedle(ch,retroAngle[ch],true);
+            retroNeedle(ch,deg,false);
+            retroHub(ch);
+            retroAngle[ch]=deg;
+        }
+    }
+}
+
+// ==================================================
+// WINAMP-INSPIRED VISUALIZATIONS
+// 16 bands; existing FFT only. No additional PCM processing.
+// Incremental updates: unchanged LED segments are never redrawn.
+// ==================================================
+static constexpr uint8_t WA_BANDS = BAND_COUNT;
+static constexpr int WA_FIRST_Y = 38;
+static constexpr int WA_BOTTOM = 227;
+static constexpr int WA_SEG_H = 5;
+static constexpr int WA_SEG_PITCH = 7;
+static constexpr int WA_SEG_COUNT = 26;
+
+static uint16_t winampLedColor(bool fire, int seg)
+{
+    if (fire)
+    {
+        if (seg >= 22) return tft.color565(247, 58, 27);
+        if (seg >= 15) return tft.color565(246, 135, 25);
+        return tft.color565(237, 177, 49);
+    }
+    if (seg >= 23) return tft.color565(245, 53, 44);
+    if (seg >= 19) return tft.color565(244, 184, 38);
+    return tft.color565(85, 224, 76);
+}
+
+static void drawWinampBars(bool fire)
+{
+    uint8_t* previous = fire ? waFirePrev : waClassicPrev;
+    const uint32_t now = millis();
+    const float delta = constrain(float(now - waClassicTick), 0.0f, 85.0f);
+    if (!fire) waClassicTick = now;
+
+    tft.startWrite();
+    for (int i = 0; i < WA_BANDS; ++i)
+    {
+        const int x0 = i * 320 / WA_BANDS;
+        const int x1 = (i + 1) * 320 / WA_BANDS;
+        const int x = x0 + 2;
+        const int width = x1 - x0 - 4;
+        const float n = constrain(smoothedBands[i] / fmaxf(autoPeak, 1.0f), 0.0f, 1.0f);
+        const int active = constrain(int(powf(n, fire ? 1.43f : 1.60f) * WA_SEG_COUNT + .5f), 0, WA_SEG_COUNT);
+        const int old = previous[i];
+        const int from = min(old, active), to = max(old, active);
+        for (int seg = from; seg < to; ++seg)
+        {
+            const int y = WA_BOTTOM - (seg + 1) * WA_SEG_PITCH;
+            if (seg < active)
+            {
+                const uint16_t c = winampLedColor(fire, seg);
+                tft.fillRect(x, y, width, WA_SEG_H, c);
+                // One-pixel highlight + shade gives LCD-feasible 3D depth.
+                tft.drawFastHLine(x + 1, y, width - 2,
+                    fire ? tft.color565(255, 207, 108) : tft.color565(168, 249, 151));
+                tft.drawFastVLine(x + width - 1, y + 1, WA_SEG_H - 1,
+                    fire ? tft.color565(105, 43, 19) : tft.color565(21, 78, 28));
+            }
+            else tft.fillRect(x, y, width, WA_SEG_H, TFT_BLACK);
+        }
+        previous[i] = active;
+
+        if (!fire)
+        {
+            const int oldPeak = waClassicPeakDrawn[i];
+            float peak = waClassicPeak[i] - delta * 0.027f;
+            if (peak < 0.0f) peak = 0.0f;
+            if (active > peak) peak = float(active);
+            waClassicPeak[i] = peak;
+            const int mark = min(WA_SEG_COUNT, int(ceilf(peak)));
+            if (oldPeak != mark)
+            {
+                // Erase just old peak; recover the segment underneath.
+                if (oldPeak > 0)
+                {
+                    const int oy = WA_BOTTOM - oldPeak * WA_SEG_PITCH - 2;
+                    tft.fillRect(x, oy, width, 2, TFT_BLACK);
+                }
+                if (mark > 0)
+                {
+                    const int py = WA_BOTTOM - mark * WA_SEG_PITCH - 2;
+                    tft.fillRect(x, py, width, 2, tft.color565(236, 236, 224));
+                }
+                waClassicPeakDrawn[i] = mark;
+            }
+        }
+    }
+    tft.endWrite();
+}
+
+// ==================================================
+// WINAMP-STYLE REAL PCM OSCILLOSCOPES
+// Draw 160 x 2px wide points; update <= 30 FPS.
+// Restore only old trace pixels, then grid, then new trace.
+// ==================================================
+static constexpr int SCOPE_POINTS = 160;
+static constexpr int SCOPE_Y_TOP = 38;
+static constexpr int SCOPE_Y_BOTTOM = 233;
+
+static void drawScope(bool stereo)
+{
+    const uint32_t now = millis();
+    if ((uint32_t)(now - scopeLastFrame) < 33) return;
+    scopeLastFrame = now;
+
+    // Snapshot the circular buffer read pointer once. No allocation/locks.
+    const uint16_t end = scopeWriteIndex;
+    int16_t l[SCOPE_POINTS], r[SCOPE_POINTS];
+    // Pick a rising zero crossing in the recent 320 samples for a less
+    // wandering waveform. The final visible window contains 160 samples.
+    uint16_t start = (end - 200) & (SCOPE_RING_SIZE - 1);
+    int16_t previous = scopeRingL[start];
+    for (uint16_t i = 1; i < 40; ++i)
+    {
+        uint16_t j = (start + i) & (SCOPE_RING_SIZE - 1);
+        int16_t current = scopeRingL[j];
+        if (previous < 0 && current >= 0) { start = j; break; }
+        previous = current;
+    }
+    for (int i = 0; i < SCOPE_POINTS; ++i)
+    {
+        const uint16_t j = (start + i) & (SCOPE_RING_SIZE - 1);
+        l[i] = scopeRingL[j];
+        r[i] = scopeRingR[j];
+    }
+
+    // Visual-only oscilloscope sensitivity (original: 2).
+    // Increase to 5 for about 2.5x larger waveforms; audio PCM is unchanged.
+    static constexpr int SCOPE_DISPLAY_GAIN = 5;
+    const int cy[2] = {stereo ? 90 : 135, stereo ? 185 : 135};
+    const int half = stereo ? 39 : 76;
+    int16_t currentY[2][SCOPE_POINTS];
+    for (int i = 0; i < SCOPE_POINTS; ++i)
+    {
+        const int16_t m = (int16_t)((int32_t(l[i]) + int32_t(r[i])) / 2);
+        const int32_t value0 = stereo ? l[i] : m;
+        const int32_t value1 = stereo ? r[i] : m;
+        currentY[0][i] = constrain(cy[0] - (value0 * half * SCOPE_DISPLAY_GAIN) / 32768,
+                                   stereo ? 44 : 48, stereo ? 133 : 221);
+        currentY[1][i] = constrain(cy[1] - (value1 * half * SCOPE_DISPLAY_GAIN) / 32768, 140, 226);
+    }
+
+    tft.startWrite();
+    // Old traces are erased with short lines. Reapply background grid
+    // afterward, instead of clearing 320x200 pixels every frame.
+    if (scopePrevValid)
+    {
+        for (int ch = 0; ch < (stereo ? 2 : 1); ++ch)
+            for (int i = 1; i < SCOPE_POINTS; ++i)
+            {
+                tft.drawLine((i-1)*2, scopePrevY[ch][i-1], i*2, scopePrevY[ch][i], TFT_BLACK);
+                if (!stereo)
+                    tft.drawLine((i-1)*2, scopePrevY[ch][i-1]+1, i*2, scopePrevY[ch][i]+1, TFT_BLACK);
+            }
+    }
+    else tft.fillRect(0, SCOPE_Y_TOP, 320, SCOPE_Y_BOTTOM-SCOPE_Y_TOP, TFT_BLACK);
+
+    const uint16_t grid = stereo ? tft.color565(20,45,53) : tft.color565(22,43,22);
+    const uint16_t axis = stereo ? tft.color565(43,77,84) : tft.color565(39,75,36);
+    for (int x = 0; x <= 319; x += 40)
+        tft.drawFastVLine(x, SCOPE_Y_TOP, SCOPE_Y_BOTTOM-SCOPE_Y_TOP, grid);
+    for (int y = 45; y < SCOPE_Y_BOTTOM; y += 20)
+        tft.drawFastHLine(0, y, 320, grid);
+    tft.drawFastHLine(0, cy[0], 320, axis);
+    if (stereo) tft.drawFastHLine(0, cy[1], 320, axis);
+
+    for (int i = 1; i < SCOPE_POINTS; ++i)
+    {
+        const int x0 = (i - 1) * 2, x1 = i * 2;
+        if (!stereo)
+        {
+            tft.drawLine(x0, currentY[0][i-1]+1, x1, currentY[0][i]+1, tft.color565(24,90,25));
+            tft.drawLine(x0, currentY[0][i-1], x1, currentY[0][i], tft.color565(105,250,95));
+        }
+        else
+        {
+            tft.drawLine(x0, currentY[0][i-1], x1, currentY[0][i], tft.color565(62,237,225));
+            tft.drawLine(x0, currentY[1][i-1], x1, currentY[1][i], tft.color565(255,170,69));
+        }
+    }
+    if (stereo)
+    {
+        tft.setTextSize(1);
+        tft.setTextDatum(TL_DATUM);
+        tft.setTextColor(tft.color565(75,233,222), TFT_BLACK);
+        tft.drawString("L", 6, 47, 2);
+        tft.setTextColor(tft.color565(255,167,76), TFT_BLACK);
+        tft.drawString("R", 6, 143, 2);
+    }
+    tft.endWrite();
+    memcpy(scopePrevY, currentY, sizeof(currentY));
+    scopePrevValid = true;
 }
 
 // ==================================================
@@ -3028,6 +3397,26 @@ void drawSpectrum()
 
         case DUAL_GAUGE:
             drawDualGauge();
+            break;
+
+        case RETRO_VU:
+            drawRetroVU();
+            break;
+
+        case WINAMP_CLASSIC:
+            drawWinampBars(false);
+            break;
+
+        case WINAMP_FIRE:
+            drawWinampBars(true);
+            break;
+
+        case SCOPE_CRT:
+            drawScope(false);
+            break;
+
+        case SCOPE_STEREO:
+            drawScope(true);
             break;
 
         default:

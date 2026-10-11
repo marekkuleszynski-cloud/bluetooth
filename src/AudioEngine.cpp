@@ -8,6 +8,9 @@
 I2SClass i2s;
 volatile uint16_t stereoPeakLeft = 0;
 volatile uint16_t stereoPeakRight = 0;
+volatile int16_t scopeRingL[SCOPE_RING_SIZE] = {};
+volatile int16_t scopeRingR[SCOPE_RING_SIZE] = {};
+volatile uint16_t scopeWriteIndex = 0;
 // ==================================================
 // AUDIO PROCESSING / TRUE PCM BYPASS
 // ==================================================
@@ -390,6 +393,18 @@ void audioCallback(
             output[i + 1] =
 
                 outR;
+
+            // Non-blocking post-DSP oscilloscope tap, ~5.5 kframes/s.
+            // Single producer; each 16-bit PCM store is atomic on ESP32.
+            static uint8_t scopeDecimator = 0;
+            if (++scopeDecimator >= 8)
+            {
+                scopeDecimator = 0;
+                const uint16_t wi = scopeWriteIndex;
+                scopeRingL[wi] = outL;
+                scopeRingR[wi] = outR;
+                scopeWriteIndex = (wi + 1) & (SCOPE_RING_SIZE - 1);
+            }
 
             // Meter taps after DSP/bypass, exactly what reaches the DAC.
             const uint16_t aL = outL == INT16_MIN ? 32768u : abs(outL);

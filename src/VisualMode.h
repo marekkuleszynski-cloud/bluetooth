@@ -26,6 +26,16 @@ enum VisualMode
 
     DUAL_GAUGE,
 
+    RETRO_VU,
+
+    WINAMP_CLASSIC,
+
+    WINAMP_FIRE,
+
+    SCOPE_CRT,
+
+    SCOPE_STEREO,
+
     EQUALIZER,
 
     MODE_COUNT
