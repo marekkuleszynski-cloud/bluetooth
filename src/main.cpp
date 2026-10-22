@@ -5,6 +5,7 @@
 #include "BluetoothManager.h"
 
 #include "DisplayManager.h"
+#include "SplashScreen.h"
 
 #include "Equalizer.h"
 #include "VisualMode.h"
@@ -27,6 +28,7 @@ void setup()
     beginAudioEngine();
     tft.init();
     tft.setRotation(3);
+    SplashScreen::show(tft);
     fadeMessageIn(TEXT_WAITING_BT);
     signalScreenState = SCREEN_WAITING_BT;
     updateEQCoefficients();

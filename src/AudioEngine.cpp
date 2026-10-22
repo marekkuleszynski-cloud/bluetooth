@@ -11,6 +11,29 @@ volatile uint16_t stereoPeakRight = 0;
 volatile int16_t scopeRingL[SCOPE_RING_SIZE] = {};
 volatile int16_t scopeRingR[SCOPE_RING_SIZE] = {};
 volatile uint16_t scopeWriteIndex = 0;
+// Visual-only AGC: one stereo-linked reference, never applied to I2S.
+// V1 stopped adapting at -58 dBFS and saturated at x24. Quiet Bluetooth
+// volume settings therefore remained visibly quieter on every display.
+// 16-bit PCM cannot be recovered when the phone transmits digital zero.
+constexpr float VISUAL_TARGET_RMS = 0.13f;
+constexpr float VISUAL_MIN_INPUT_RMS = 0.00003f; // ~ -90.5 dBFS
+constexpr float VISUAL_GAIN_MIN = 0.05f;
+constexpr float VISUAL_GAIN_MAX = 512.0f;
+constexpr float VISUAL_LEVEL_RISE_MS = 450.0f;
+constexpr float VISUAL_LEVEL_FALL_MS = 850.0f;
+constexpr float VISUAL_SILENCE_RESET_MS = 2500.0f;
+
+static float visualRmsReference = 0.0f;
+static float visualGain = 1.0f;
+static float visualQuietMs = 0.0f;
+static inline int16_t visualSample(int16_t sample, float gain)
+{
+    float v = static_cast<float>(sample) * gain;
+    if (v > 32767.0f) v = 32767.0f;
+    if (v < -32768.0f) v = -32768.0f;
+    return static_cast<int16_t>(v);
+}
+
 // ==================================================
 // AUDIO PROCESSING / TRUE PCM BYPASS
 // ==================================================
@@ -180,6 +203,8 @@ void audioCallback(
         float preamp =
 
             eqPreampBank[bank];
+
+        double visualEnergy = 0.0;
 
         for (size_t i = 0;
 
@@ -396,6 +421,12 @@ void audioCallback(
 
                 outR;
 
+            // Stereo-linked RMS for visual AGC, before any display scaling.
+            const float normL = outL * (1.0f / 32768.0f);
+            const float normR = outR * (1.0f / 32768.0f);
+            visualEnergy += 0.5 * (double(normL) * normL + double(normR) * normR);
+
+
             // Non-blocking post-DSP oscilloscope tap, ~5.5 kframes/s.
             // Single producer; each 16-bit PCM store is atomic on ESP32.
             static uint8_t scopeDecimator = 0;
@@ -403,14 +434,18 @@ void audioCallback(
             {
                 scopeDecimator = 0;
                 const uint16_t wi = scopeWriteIndex;
+                // Scope keeps RAW post-DSP PCM: normalize each display window
+                // separately to avoid 16-bit clipping in Visual AGC.
                 scopeRingL[wi] = outL;
                 scopeRingR[wi] = outR;
                 scopeWriteIndex = (wi + 1) & (SCOPE_RING_SIZE - 1);
             }
 
             // Meter taps after DSP/bypass, exactly what reaches the DAC.
-            const uint16_t aL = outL == INT16_MIN ? 32768u : abs(outL);
-            const uint16_t aR = outR == INT16_MIN ? 32768u : abs(outR);
+            const int16_t meterL = visualSample(outL, visualGain);
+            const int16_t meterR = visualSample(outR, visualGain);
+            const uint16_t aL = meterL == INT16_MIN ? 32768u : abs(meterL);
+            const uint16_t aR = meterR == INT16_MIN ? 32768u : abs(meterR);
             if (aL > blockPeakL) blockPeakL = aL;
             if (aR > blockPeakR) blockPeakR = aR;
 
@@ -421,22 +456,8 @@ void audioCallback(
             {
 
                 vReal[fftIndex] =
-
-                    (
-
-                        static_cast<double>(
-
-                            outL
-
-                        ) +
-
-                        static_cast<double>(
-
-                            outR
-
-                        )
-
-                    ) * 0.5;
+                    (static_cast<double>(meterL) +
+                     static_cast<double>(meterR)) * 0.5;
 
                 vImag[fftIndex] =
 
@@ -458,6 +479,39 @@ void audioCallback(
 
             }
 
+        }
+
+        // Shared stereo RMS reference. Update only once per PCM chunk.
+        // Quiet chunks must not immediately erase the level reference:
+        // real music contains pauses and near-zero crossings.
+        const float frames = count * 0.5f;
+        const float chunkMs = frames * (1000.0f / SAMPLE_RATE);
+        const float chunkRms = sqrtf(static_cast<float>(visualEnergy / frames));
+        if (chunkRms >= VISUAL_MIN_INPUT_RMS)
+        {
+            visualQuietMs = 0.0f;
+            if (visualRmsReference < VISUAL_MIN_INPUT_RMS)
+                visualRmsReference = chunkRms;
+            else
+            {
+                const float tauMs = chunkRms > visualRmsReference
+                    ? VISUAL_LEVEL_RISE_MS : VISUAL_LEVEL_FALL_MS;
+                const float follow = 1.0f - expf(-chunkMs / tauMs);
+                visualRmsReference += (chunkRms - visualRmsReference) * follow;
+            }
+            visualGain = constrain(VISUAL_TARGET_RMS / visualRmsReference,
+                                   VISUAL_GAIN_MIN, VISUAL_GAIN_MAX);
+        }
+        else
+        {
+            visualQuietMs += chunkMs;
+            if (visualQuietMs >= VISUAL_SILENCE_RESET_MS)
+            {
+                // In actual silence visualSample(0, gain) remains zero;
+                // reset after a pause so the next track recalibrates.
+                visualRmsReference = 0.0f;
+                visualGain = 1.0f;
+            }
         }
 
         // Visual meter only: one store per callback/chunk (no TFT in audio).

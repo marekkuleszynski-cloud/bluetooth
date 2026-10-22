@@ -24,13 +24,13 @@ enum VisualMode
 
     PIXEL_MATRIX,
 
-    DUAL_GAUGE,
-
-    RETRO_VU,
-
     WINAMP_CLASSIC,
 
     WINAMP_FIRE,
+    
+    DUAL_GAUGE,
+
+    RETRO_VU,
 
     SCOPE_CRT,
 

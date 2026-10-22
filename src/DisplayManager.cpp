@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include "SplashScreen.h"
 #include <cstring>
 #include "AudioEngine.h"
 #include <math.h>
@@ -17,10 +18,10 @@ const char* visualModeNames[MODE_COUNT] =
     "Vertical Rainbow",
     "Color Wave",
     "Pixel Matrix",
-    "Dual Gauge",
-    "Retro VU",
     "Winamp Classic",
     "Winamp Fire",
+    "Dual Gauge",
+    "Retro VU",
     "Scope CRT",
     "Scope Stereo",
     "Equalizer"
@@ -89,9 +90,9 @@ constexpr unsigned long OVERLAY_REFRESH =
 
 // ==================================================
 
-constexpr int EQ_TOP = 31;
+constexpr int EQ_TOP = 37; // outer frame begins at y=34, 4 px below header
 
-constexpr int EQ_BOTTOM = 193;
+constexpr int EQ_BOTTOM = 194; // outer frame ends at y=196, 4 px above band labels
 
 constexpr int EQ_CENTER_Y =
 
@@ -2100,7 +2101,7 @@ void drawEqBand(uint8_t i, uint8_t brightness)
     }
 
     // Full band redraw only on first entry (or deliberate full refresh).
-    tft.fillRect(cx - 26, top - 3, 52, 208, TFT_BLACK);
+    tft.fillRect(cx - 26, top - 3, 52, height + 6, TFT_BLACK);
     auto shade = [brightness](uint16_t color) -> uint16_t {
         return scaleColor565(color, brightness);
     };
@@ -2780,6 +2781,22 @@ void resetVisualState()
 
 
 // ==================================================
+// Shared visual calibration and ballistics for BOTH analog stereo meters.
+// These values refer to display-calibrated dBFS peak levels, not acoustic SPL.
+static constexpr float VU_DISPLAY_MIN_DB = -15.0f;
+static constexpr float VU_DISPLAY_MAX_DB =   6.0f;
+static constexpr float VU_DISPLAY_TRIM_DB = 9.0f;
+static constexpr float VU_ATTACK_MS = 12.0f;
+static constexpr float VU_RELEASE_MS = 190.0f;
+static constexpr float VU_MIN_VISIBLE_CHANGE_DEG = 0.8f;
+
+static float vuDisplayPosition(float level)
+{
+    const float db = 20.0f * log10f(fmaxf(level, 0.0001f)) + VU_DISPLAY_TRIM_DB;
+    return constrain((db - VU_DISPLAY_MIN_DB) /
+                     (VU_DISPLAY_MAX_DB - VU_DISPLAY_MIN_DB), 0.0f, 1.0f);
+}
+
 // STEREO ANALOG GAUGE - STATIC 3D FACE, DYNAMIC NEEDLES
 // ==================================================
 
@@ -2787,11 +2804,11 @@ void resetVisualState()
 // Fixed faces are painted once; needle movement touches only the clear
 // centre of each dial and never overdraws tick marks or labels.
 static constexpr int GAUGE_PIVOT_Y = 193;
-static constexpr int GAUGE_TIP_R = 83;
-static constexpr float GAUGE_START_DEG = 205.0f;
+static constexpr int GAUGE_TIP_R = 70;  // preserve margin including 3D shadow at both sweep ends
+static constexpr float GAUGE_START_DEG = 210.0f;
 static constexpr float GAUGE_SWEEP_DEG = 120.0f;  // inset at right scale endpoint
 static constexpr uint16_t GAUGE_REFRESH_MS = 33; // ~30 FPS; reduce TFT load
-static constexpr float GAUGE_VISUAL_GAIN_DB = 3.0f;
+// Shared trim: VU_DISPLAY_TRIM_DB applies to both meters.
 
 static int gaugeCX(uint8_t side) { return side ? 240 : 80; }
 static uint16_t gaugeInnerColor() { return tft.color565(240, 241, 243); }
@@ -2881,7 +2898,7 @@ static void drawGaugeFace(uint8_t side)
                       tft.color565(135, 137, 143));
 
     // Fine professional sweep, matching the actual needle geometry.
-    // All ticks remain beyond the 83 px needle reach.
+    // All ticks remain outside the 70 px needle reach.
     for (int i = 0; i <= 30; ++i)
     {
         const float angle = (GAUGE_START_DEG +
@@ -2903,9 +2920,9 @@ static void drawGaugeFace(uint8_t side)
         tft.drawLine(x0, y0, x1, y1, c);
     }
     // Scale labels are deliberately placed above the needle envelope.
-    // A needle reaches only up to y=110, so text in y=60..80 is safe.
+    // Needle reach is limited to 70 px; text in y=60..80 remains safe.
     tft.setTextDatum(MC_DATUM);
-    const char* labels[5] = {"-42", "-30", "-18", "-6", "0"};
+    const char* labels[5] = {"-15", "-10", "-5", "0", "+6"};
     const int labelOffset[5] = {-53, -26, 0, 26, 53};
     for (int j = 0; j < 5; ++j)
     {
@@ -2950,20 +2967,15 @@ static void drawDualGauge()
     // both complete needle updates.
     for (uint8_t ch = 0; ch < 2; ++ch)
     {
-        const float tau = in[ch] > gaugeLevel[ch] ? 12.0f : 190.0f;
+        const float tau = in[ch] > gaugeLevel[ch] ? VU_ATTACK_MS : VU_RELEASE_MS;
         const float alpha = 1.0f - expf(-dt / tau);
         gaugeLevel[ch] += (in[ch] - gaugeLevel[ch]) * alpha;
 
-        // Display-only trim, kept modest to prevent both needles
-        // saturating near the right-hand end with normal music.
-        const float db = 20.0f *
-            log10f(fmaxf(gaugeLevel[ch], 0.0001f)) +
-            GAUGE_VISUAL_GAIN_DB;
-        const float pos = (constrain(db, -42.0f, 0.0f) + 42.0f) / 42.0f;
+        const float pos = vuDisplayPosition(gaugeLevel[ch]);
         const float angle = constrain(GAUGE_START_DEG + pos * GAUGE_SWEEP_DEG,
                                       GAUGE_START_DEG, GAUGE_START_DEG + GAUGE_SWEEP_DEG);
 
-        if (fabsf(angle - gaugeDrawnAngle[ch]) >= 0.8f)
+        if (fabsf(angle - gaugeDrawnAngle[ch]) >= VU_MIN_VISIBLE_CHANGE_DEG)
         {
             if (gaugeDrawnAngle[ch] > -100.0f)
                 gaugeNeedle(ch, gaugeDrawnAngle[ch], true);
@@ -2984,7 +2996,7 @@ static constexpr int RETRO_NEEDLE_LENGTH = 57;
 static constexpr float RETRO_FIRST_ANGLE = 208.0f;
 static constexpr float RETRO_LAST_ANGLE = 332.0f;
 static constexpr uint32_t RETRO_REFRESH_MS = 33;  // same stable 30fps limit
-static constexpr float RETRO_SENSITIVITY_DB = 3.0f;
+// Shared trim: VU_DISPLAY_TRIM_DB applies to both meters.
 static int retroCenter(uint8_t ch) { return ch ? 240 : 80; }
 static uint16_t retroIvory() { return tft.color565(255, 226, 161); }
 
@@ -3133,12 +3145,12 @@ static void drawRetroFace(uint8_t ch)
     // Printed numerals ABOVE the needle sweep, deliberately not under needle.
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(tft.color565(36,30,26),retroIvory());
-    tft.drawString("-20",cx-43,RETRO_CY-22,1);
+    tft.drawString("-15",cx-43,RETRO_CY-22,1);
     tft.drawString("-10",cx-23,RETRO_CY-38,1);
     tft.drawString("-5",cx,RETRO_CY-43,1);
     tft.setTextColor(tft.color565(176,19,16),retroIvory());
     tft.drawString("0",cx+26,RETRO_CY-38,1);
-    tft.drawString("+3",cx+46,RETRO_CY-22,1);
+    tft.drawString("+6",cx+46,RETRO_CY-22,1);
     // A little machined plate at the bottom, outside needle's travel.
     tft.fillRoundRect(cx-45,189,90,19,3,tft.color565(61,58,56));
     tft.fillRoundRect(cx-43,190,86,15,2,tft.color565(175,171,167));
@@ -3170,13 +3182,12 @@ static void drawRetroVU()
     const float levels[2]={stereoPeakLeft/32768.0f,stereoPeakRight/32768.0f};
     for(uint8_t ch=0;ch<2;ch++)
     {
-        const float tau=levels[ch]>retroLevel[ch]?15.0f:210.0f;
+        const float tau=levels[ch]>retroLevel[ch]?VU_ATTACK_MS:VU_RELEASE_MS;
         retroLevel[ch]+=(levels[ch]-retroLevel[ch])*(1.0f-expf(-dt/tau));
-        const float db=20.0f*log10f(fmaxf(retroLevel[ch],0.0001f))+RETRO_SENSITIVITY_DB;
-        const float p=(constrain(db,-42.0f,0.0f)+42.0f)/42.0f;
+        const float p=vuDisplayPosition(retroLevel[ch]);
         const float deg=constrain(RETRO_FIRST_ANGLE+p*(RETRO_LAST_ANGLE-RETRO_FIRST_ANGLE),
                                   RETRO_FIRST_ANGLE,RETRO_LAST_ANGLE);
-        if(fabsf(deg-retroAngle[ch])>=0.85f)
+        if(fabsf(deg-retroAngle[ch])>=VU_MIN_VISIBLE_CHANGE_DEG)
         {
             if(retroAngle[ch]>-100.0f) retroNeedle(ch,retroAngle[ch],true);
             retroNeedle(ch,deg,false);
@@ -3280,7 +3291,13 @@ static void drawWinampBars(bool fire)
 // Restore only old trace pixels, then grid, then new trace.
 // ==================================================
 static constexpr int SCOPE_POINTS = 160;
-static constexpr int SCOPE_DISPLAY_GAIN = 5; // retain current scope sensitivity
+// Scope uses its OWN display-only auto-scaling on a 160-sample PCM window.
+// AudioEngine stores raw post-DSP PCM in the scope ring; never touch I2S.
+// Target RMS ~42% full scale gives a readable waveform without fixing its
+// height to the phone volume. One gain for both channels preserves stereo.
+static constexpr float SCOPE_TARGET_RMS = 0.42f;
+static constexpr float SCOPE_MIN_RMS = 0.0006f; // avoid boosting digital silence/noise
+static constexpr float SCOPE_MAX_GAIN = 512.0f;
 static constexpr int SCOPE_Y_TOP = 38;
 static constexpr int SCOPE_Y_BOTTOM = 233;
 
@@ -3311,7 +3328,22 @@ static void drawScope(bool stereo)
         r[i] = scopeRingR[j];
     }
 
-    // Separate amplitude control for display, never touches output PCM.
+    // Measure the CURRENT plotted window instead of tracking phone volume
+    // using a slow audio AGC. A single stereo-linked gain avoids L/R pumping.
+    double energy = 0.0;
+    for (int i = 0; i < SCOPE_POINTS; ++i)
+    {
+        const float a = static_cast<float>(l[i]) / 32768.0f;
+        const float b = static_cast<float>(r[i]) / 32768.0f;
+        energy += 0.5 * (static_cast<double>(a) * a +
+                         static_cast<double>(b) * b);
+    }
+    const float windowRms = sqrtf(static_cast<float>(energy / SCOPE_POINTS));
+    const float scopeGain = windowRms >= SCOPE_MIN_RMS
+        ? constrain(SCOPE_TARGET_RMS / windowRms, 0.01f, SCOPE_MAX_GAIN)
+        : 0.0f;
+
+    // Scope gain affects only coordinates, never the DAC audio.
     const int cy[2] = {stereo ? 90 : 135, stereo ? 185 : 135};
     const int half = stereo ? 39 : 76;
     int16_t currentY[2][SCOPE_POINTS];
@@ -3320,9 +3352,12 @@ static void drawScope(bool stereo)
         const int16_t m = (int16_t)((int32_t(l[i]) + int32_t(r[i])) / 2);
         const int32_t value0 = stereo ? l[i] : m;
         const int32_t value1 = stereo ? r[i] : m;
-        currentY[0][i] = constrain(cy[0] - (value0 * half * SCOPE_DISPLAY_GAIN) / 32768,
-                                   stereo ? 44 : 48, stereo ? 133 : 221);
-        currentY[1][i] = constrain(cy[1] - (value1 * half * SCOPE_DISPLAY_GAIN) / 32768, 140, 226);
+        const int y0 = cy[0] - static_cast<int>(
+            (static_cast<float>(value0) / 32768.0f) * half * scopeGain);
+        const int y1 = cy[1] - static_cast<int>(
+            (static_cast<float>(value1) / 32768.0f) * half * scopeGain);
+        currentY[0][i] = constrain(y0, stereo ? 44 : 48, stereo ? 133 : 221);
+        currentY[1][i] = constrain(y1, 140, 226);
     }
 
     tft.startWrite();
@@ -3500,72 +3535,46 @@ void drawCenteredMessage(
     uint8_t brightness
 )
 {
-    tft.fillScreen(TFT_BLACK);
+    // Rebuild the splash background when a waiting state changes.
+    SplashScreen::draw(tft);  // draws only; no 2.5 second startup delay
+
+    // Status is deliberately below the neon logo.
+    // Shared compact geometry for both waiting messages.
+    constexpr int PANEL_X = 20;
+    constexpr int PANEL_Y = 190;
+    constexpr int PANEL_W = 280;
+    constexpr int PANEL_H = 34;
+
+    tft.fillRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 7,
+                      tft.color565(5, 9, 20));
+    tft.drawRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 7,
+                      tft.color565(18, 80, 113));
+    tft.drawFastHLine(PANEL_X + 12, PANEL_Y + 4, PANEL_W - 24,
+                      tft.color565(24, 53, 83));
 
     tft.setTextDatum(MC_DATUM);
-
-    uint16_t color =
-        tft.color565(
-            brightness,
-            brightness,
-            brightness
-        );
-
-    tft.setTextColor(
-        color,
-        TFT_BLACK
-    );
-
-    tft.drawString(
-        message,
-        160,
-        120,
-        4
-    );
+    // Font 2 fits both waiting messages inside the shared 280px panel.
+    // Slight blue-white tint stays visible on the artwork.
+    tft.setTextColor(tft.color565(brightness, brightness, brightness));
+    tft.drawString(message, 160, PANEL_Y + PANEL_H / 2, 2);
 }
 
+// Keep legacy API names to avoid changing AppController and main.cpp.
+// Waiting screens are now drawn immediately, with no fade or delay.
 void fadeMessageIn(
     const char* message
 )
 {
-    for (uint8_t step = 0;
-         step <= SCREEN_FADE_STEPS;
-         step++)
-    {
-        uint8_t brightness =
-            (uint16_t(step) * 255) /
-            SCREEN_FADE_STEPS;
-
-        drawCenteredMessage(
-            message,
-            brightness
-        );
-
-        delay(SCREEN_FADE_STEP_MS);
-    }
+    drawCenteredMessage(message, 255);
 }
 
 void fadeMessageOut(
     const char* message
 )
 {
-    for (int step = SCREEN_FADE_STEPS;
-         step >= 0;
-         step--)
-    {
-        uint8_t brightness =
-            (uint16_t(step) * 255) /
-            SCREEN_FADE_STEPS;
-
-        drawCenteredMessage(
-            message,
-            brightness
-        );
-
-        delay(SCREEN_FADE_STEP_MS);
-    }
-
-    tft.fillScreen(TFT_BLACK);
+    // Next screen redraws its own background immediately.
+    // Avoid an intermediate black/blank frame and unnecessary SPI writes.
+    (void)message;
 }
 
 void transitionMessage(
@@ -3573,7 +3582,6 @@ void transitionMessage(
     const char* to
 )
 {
-    fadeMessageOut(from);
-    fadeMessageIn(to);
+    (void)from;
+    drawCenteredMessage(to, 255);
 }
-
