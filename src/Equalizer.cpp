@@ -519,63 +519,15 @@ void updateEQCoefficients()
 
         );
 
-    float maxBoost = 0.0f;
-
-    for (uint8_t i = 0;
-
-         i < EQ_BAND_COUNT;
-
-         i++)
-
+    // SMART BOOST: filters apply the requested gain without continuously
+    // attenuating every frequency. Peak protection is performed after the
+    // EQ, on the actual stereo sample pair in AudioEngine.cpp.
+    for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i)
     {
-
-        eqActiveBank[newBank][i] =
-
-            fabsf(eqGain[i]) >
-
-            0.05f;
-
-        if (eqGain[i] >
-
-            maxBoost)
-
-        {
-
-            maxBoost =
-
-                eqGain[i];
-
-        }
-
+        eqActiveBank[newBank][i] = fabsf(eqGain[i]) > 0.05f;
     }
 
-    if (maxBoost > 0.0f)
-
-    {
-
-        eqPreampBank[newBank] =
-
-            powf(
-
-                10.0f,
-
-                -(maxBoost + 1.0f) /
-
-                20.0f
-
-            );
-
-    }
-
-    else
-
-    {
-
-        eqPreampBank[newBank] =
-
-            1.0f;
-
-    }
+    eqPreampBank[newBank] = 1.0f;
 
     activeEqBank =
 

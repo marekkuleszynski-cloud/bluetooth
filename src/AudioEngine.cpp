@@ -21,6 +21,15 @@ volatile uint16_t scopeWriteIndex = 0;
 
 // Crossfade time between processed and raw PCM.
 // No mute / no I2S restart is used.
+// SMART BOOST stereo-linked, zero-lookahead peak limiter.
+// One identical gain for L and R maintains stereo balance.
+// No constant preamp reduction: gain is unity unless the PCM peak
+// would exceed the ceiling. Instant peak protection, slow release.
+constexpr float SMART_LIMIT_CEILING = 0.98f;  // ~ -0.18 dBFS
+constexpr float SMART_LIMIT_RELEASE_MS = 160.0f;
+constexpr float SMART_LIMIT_RELEASE_STEP =
+    1.0f / (SAMPLE_RATE * SMART_LIMIT_RELEASE_MS / 1000.0f);
+
 constexpr float PROCESSING_CROSSFADE_MS = 20.0f;
 constexpr float PROCESSING_CROSSFADE_FRAMES =
     SAMPLE_RATE *
@@ -103,6 +112,8 @@ void audioCallback(
     // 0.0 = true raw PCM bypass
     static float processingMix = 1.0f;
     static bool previousProcessingTarget = true;
+    static float limiterGain = 1.0f; // Persistent across audio chunks
+
 
     size_t offset = 0;
 
@@ -270,6 +281,7 @@ void audioCallback(
                 // No preamp, float conversion, EQ or clamp.
                 outL = rawL;
                 outR = rawR;
+                limiterGain = 1.0f;
             }
             else
             {
@@ -339,51 +351,41 @@ void audioCallback(
 
                 }
 
-                if (processingMix >= 1.0f)
+                // Crossfade raw <-> processed before limiting.
+                float mixedLeft = processedLeft;
+                float mixedRight = processedRight;
+                if (processingMix < 1.0f)
                 {
-                    outL =
-                        floatToSample(
-                            processedLeft
-                        );
+                    mixedLeft = rawLeft * (1.0f - processingMix) +
+                                processedLeft * processingMix;
+                    mixedRight = rawRight * (1.0f - processingMix) +
+                                 processedRight * processingMix;
+                }
 
-                    outR =
-                        floatToSample(
-                            processedRight
-                        );
+                // Protect against unstable filter output (e.g. NaN).
+                if (!isfinite(mixedLeft)) mixedLeft = 0.0f;
+                if (!isfinite(mixedRight)) mixedRight = 0.0f;
+
+                // Stereo-linked peak limiter. For a transient that would
+                // clip, reduce both channels by exactly the same factor.
+                const float peak = fmaxf(fabsf(mixedLeft), fabsf(mixedRight));
+                const float requiredGain = peak > SMART_LIMIT_CEILING
+                    ? SMART_LIMIT_CEILING / peak : 1.0f;
+
+                if (requiredGain < limiterGain)
+                {
+                    limiterGain = requiredGain; // fast attack (no overshoot)
                 }
                 else
                 {
-                    // Smooth, sample-by-sample crossfade.
-                    float mixedLeft =
-
-                        rawLeft *
-
-                            (1.0f - processingMix) +
-
-                        processedLeft *
-
-                            processingMix;
-
-                    float mixedRight =
-
-                        rawRight *
-
-                            (1.0f - processingMix) +
-
-                        processedRight *
-
-                            processingMix;
-
-                    outL =
-                        floatToSample(
-                            mixedLeft
-                        );
-
-                    outR =
-                        floatToSample(
-                            mixedRight
-                        );
+                    // Gentle gain recovery over ~160 ms. In the meantime,
+                    // keep enough protection for the current peak.
+                    limiterGain = fminf(requiredGain,
+                                        limiterGain + SMART_LIMIT_RELEASE_STEP);
                 }
+
+                outL = floatToSample(mixedLeft * limiterGain);
+                outR = floatToSample(mixedRight * limiterGain);
             }
 
             output[i] =
