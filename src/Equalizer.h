@@ -56,3 +56,8 @@ inline float processBiquad(
 }
 
 void updateEQCoefficients();
+
+// Persistent 5-band EQ settings (ESP32 NVS).
+void loadEQSettings();
+void scheduleEQSave();
+void serviceEQSave();

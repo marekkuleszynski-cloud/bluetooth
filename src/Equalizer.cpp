@@ -1,4 +1,6 @@
 #include "Equalizer.h"
+#include <Preferences.h>
+#include <cmath>
 
 const char* eqBandNames[EQ_BAND_COUNT] =
 {
@@ -535,3 +537,88 @@ void updateEQCoefficients()
 
 }
 
+
+// ==================================================
+// PERSISTENT EQ SETTINGS - NVS
+// ==================================================
+namespace {
+constexpr uint32_t EQ_SAVE_DELAY_MS = 3000;
+constexpr const char* EQ_NVS_NAMESPACE = "eq-settings";
+constexpr const char* EQ_NVS_KEY = "gains-v1";
+uint32_t eqLastChangeMs = 0;
+bool eqSavePending = false;
+float eqLastSaved[EQ_BAND_COUNT] = {};
+bool eqHaveLastSaved = false;
+
+bool eqSettingsDifferFromSaved()
+{
+    if (!eqHaveLastSaved) return true;
+    for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i)
+        if (fabsf(eqGain[i] - eqLastSaved[i]) > 0.0001f) return true;
+    return false;
+}
+} // namespace
+
+void loadEQSettings()
+{
+    Preferences prefs;
+    if (prefs.begin(EQ_NVS_NAMESPACE, true))
+    {
+        float saved[EQ_BAND_COUNT];
+        if (prefs.getBytesLength(EQ_NVS_KEY) == sizeof(saved) &&
+            prefs.getBytes(EQ_NVS_KEY, saved, sizeof(saved)) == sizeof(saved))
+        {
+            bool valid = true;
+            for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i)
+                if (!std::isfinite(saved[i]) || saved[i] < -12.0f || saved[i] > 12.0f)
+                    valid = false;
+            if (valid)
+            {
+                for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i) eqGain[i] = saved[i];
+                Serial.println("[EQ NVS] Stored equalizer restored");
+            }
+            else Serial.println("[EQ NVS] Invalid settings; using defaults");
+        }
+        prefs.end();
+    }
+    for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i) eqLastSaved[i] = eqGain[i];
+    eqHaveLastSaved = true;
+    eqSavePending = false;
+}
+
+void scheduleEQSave()
+{
+    // Called only when the user actually changes a band.
+    eqLastChangeMs = millis();
+    eqSavePending = true;
+}
+
+void serviceEQSave()
+{
+    if (!eqSavePending || millis() - eqLastChangeMs < EQ_SAVE_DELAY_MS) return;
+    eqSavePending = false;
+    if (!eqSettingsDifferFromSaved()) return;
+
+    Preferences prefs;
+    if (!prefs.begin(EQ_NVS_NAMESPACE, false))
+    {
+        Serial.println("[EQ NVS] Open failed; will retry");
+        eqSavePending = true;
+        eqLastChangeMs = millis();
+        return;
+    }
+    const size_t written = prefs.putBytes(EQ_NVS_KEY, eqGain, sizeof(float) * EQ_BAND_COUNT);
+    prefs.end();
+    if (written == sizeof(float) * EQ_BAND_COUNT)
+    {
+        for (uint8_t i = 0; i < EQ_BAND_COUNT; ++i) eqLastSaved[i] = eqGain[i];
+        eqHaveLastSaved = true;
+        Serial.println("[EQ NVS] Saved 5 bands");
+    }
+    else
+    {
+        Serial.println("[EQ NVS] Save failed; will retry");
+        eqSavePending = true;
+        eqLastChangeMs = millis();
+    }
+}

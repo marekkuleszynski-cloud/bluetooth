@@ -31,12 +31,14 @@ void setup()
     SplashScreen::show(tft);
     fadeMessageIn(TEXT_WAITING_BT);
     signalScreenState = SCREEN_WAITING_BT;
+    loadEQSettings();
     updateEQCoefficients();
     beginBluetooth();
 }
 
 void loop()
 {
+    serviceEQSave();
     updateSignalScreenState();
     updateKey0();
 

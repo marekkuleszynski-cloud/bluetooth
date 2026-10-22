@@ -58,6 +58,7 @@ void changeVisualMode(
             );
 
         updateEQCoefficients();
+        scheduleEQSave();
 
         drawEqBand(
 
